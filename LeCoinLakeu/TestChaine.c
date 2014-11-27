@@ -20,6 +20,7 @@ int main(){
 
 	pid_t pid1, pid2;
 	int msg;
-
+	key_t key;
+	
 
 }
