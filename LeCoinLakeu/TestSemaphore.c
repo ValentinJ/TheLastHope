@@ -19,31 +19,34 @@ int main(){
 
 	int value;
 	sem = sem_open("/toto",O_RDWR|O_CREAT,066,0);
-	pid_t pid = fork();
-	printf("%i",pid);
-	if(pid == 0){
-		printf("test");
+
+	if(fork() == 0){
+
 		sem_getvalue(sem,&value);
-		printf("%d\n",value);
+		printf("------------------------------------------\n");
+		printf("Valeur du sémaphore du fils %d\n",value);
+		printf("------------------------------------------\n");
 		printf("Fils entre en attente\n");
 		sem_wait(sem);
 		printf("Fils libéré\n");
-		exit(0);
+		
 	}
 	else{
+	printf("------------------------------------------\n");
 	printf("J'attend 1s\n");
-	sleep(1);
-
-	printf("J'affiche la valeur de la semaphore\n");
+	sleep(2);
 
 	sem_getvalue(sem,&value);
-	printf("%d\n",value);
-
+	printf("------------------------------------------\n");
+	printf("Valeur de la semaphore du père %d\n",value);
+	printf("------------------------------------------\n");
 	printf("Je libère le fils\n");
 	sem_post(sem);
 
 	sem_getvalue(sem,&value);
-	printf("%d\n",value);
+	printf("------------------------------------------\n");
+	printf("Valeur de la semaphore du père %d\n",value);
+	printf("------------------------------------------\n");
 
 	wait(NULL);
 	sem_unlink("/toto");
