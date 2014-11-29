@@ -90,7 +90,6 @@ int main(void){
 			printf("%s\n",m.data);
 			//printf("J'ai lu %i\n",i);
 		}
-
 		msgctl(msg,IPC_RMID,0);
 		printf("Je m'en vais, bisous\n");
 		return 0;
