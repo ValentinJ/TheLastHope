@@ -48,7 +48,7 @@ void* maFonction(void* _s){
 	strcpy(dmem->data,dm.data);
 	//on détache
 	shmdt(dmem);
-	if(p->x < 9){
+	if(p->x < 4){
 		dmem = (donneeMemoire* ) shmat(p->tomem2,NULL,0);
 		strcpy(dmem->data,dm.data);
 		shmdt(dmem);
@@ -68,18 +68,18 @@ int main(void){
 
 
 	int i;
-	int memoires[20];
-	donnee tab[10];
-	pthread_t threads[10];
+	int memoires[10];
+	donnee tab[5];
+	pthread_t threads[5];
 	
 	char tmp[256];
 	//création des memoires partagées
-	for(i=0;i<10;i++){
+	for(i=0;i<5;i++){
 		memoires[i]= shmget(IPC_PRIVATE,sizeof(donneeMemoire),0666);
 		if(memoires[i]==-1) perror("Probeme de memoire");
 	}
 	//Préparation des données pour les threads
-	for(i=0;i<10;i++){
+	for(i=0;i<5;i++){
 		tab[i].x = i;
 		strcpy(tab[i].data,"Je suis le thread ");
 		sprintf(tmp,"%i",tab[i].x);
@@ -98,13 +98,13 @@ int main(void){
 	}
 
 	printf("\n\nInitialisation terminée.\n\nLancement des threads\n");
-	for(i=0;i<10;i++) 	pthread_create(&threads[i],0,maFonction,&tab[i]);
+	for(i=0;i<5;i++) 	pthread_create(&threads[i],0,maFonction,&tab[i]);
 	
 	donneeMessage dm;
 
-	for(i=0;i<10;i++)  	pthread_join(threads[i],NULL);
+	for(i=0;i<5;i++)  	pthread_join(threads[i],NULL);
 
-	for(i=0;i<10;i++){
+	for(i=0;i<5;i++){
 		msgrcv(fileMessage,&dm,1000,i+1,0);
 		printf("Père : j'ai lu : %s\n",dm.data);
 	}
@@ -112,12 +112,12 @@ int main(void){
 
 	donneeMemoire* dmem;
 
-	for(i=0;i<20;i++){
+	for(i=0;i<10;i++){
 		dmem = (donneeMemoire*) shmat(memoires[i],NULL,0);
 		printf("Père a lu dans la mémoire %i : %s",i,dmem->data);
 		shmdt(dmem);
 	}
-	for(i=0;i<10;i++){
+	for(i=0;i<50;i++){
 		shmctl(memoires[i],IPC_RMID,NULL);
 	}
 	msgctl(fileMessage,IPC_RMID,0);
