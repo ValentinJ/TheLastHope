@@ -137,18 +137,23 @@ void hommeFLux_rendreConteneur(int num){
 }
 
 void* posteTravail(void* donnees){
-	//On va tenter de recuperer les données
+	//On tente de recuperer les données
 	struct donneesInitThread *mesDonnees;
 	mesDonnees = (struct donneesInitThread*) donnees;
-	printf("%d\n",mesDonnees->numeroPoste);
-	int num_conteneur = hommeFlux_attribuerConteneur();
 
-		printf("Mon conteneur %d\n",num_conteneur);
+	//1ère étape récupérer les pid des prédécesseurs
+	sleep(1);//afin d'attendre tous les threads
 
-		sleep(2);
+	int i;
+	for(i=0;i<mesDonnees->nbPrecedents;i++){
+		mesDonnees->precedentsID[i] = tabThreads[mesDonnees->precedentsNumero[i]][1];
+	}
 
-		printf("Je rend mon conteneur %d\n",num_conteneur);
-		hommeFLux_rendreConteneur(num_conteneur);
+	//2nde étape récupérer le pid du suivant
+	if(mesDonnees->numeroPoste != 0)
+		mesDonnees->suivantID = tabThreads[mesDonnees->suivantNumero][1];
+
+	
 return;
 }
 
