@@ -22,6 +22,7 @@ pthread_t tabThreads[NB_THREADS][2];
 
 pthread_mutex_t attributionConteneur;
 pthread_cond_t attenteConteneur;
+pthread_cond_t attenteAcces;
 /*
 	Structure permettant de stocker les infos du poste/thread
 */
@@ -34,6 +35,11 @@ struct donneesInitThread
 	int precedentsNumero[NB_THREADS];
 	pthread_t precedentsID[NB_THREADS];
 	int nbPiecesAProduire;
+	int tempsFabrication;
+	pthread_mutex_t mutexConteneurEntrant;
+	pthread_mutex_t mutexConteneurSortant;
+	int memoireSortant;
+	int memoireEntrant;
 };
 
 struct donneesInitThread tabDonneesThread[NB_THREADS];
@@ -52,12 +58,20 @@ void initialisationPoste(int numero){
 	tabDonneesThread[numero].nbPrecedents = nb;
 	tabDonneesThread[numero].numeroPoste = numero;
 
-	//On initialise tous les postes reliés à celui-ci
+	//On initialise tous les postes reliés à celui-ci ainsi que le mutex
+	pthread_mutex_init(&tabDonneesThread[numero].mutexConteneurEntrant,NULL);
+
+	//On initialise les clés pour coder le segment de mémoire partagée
+	tabDonneesThread[numero].memoireEntrant = shmget(IPC_PRIVATE,sizeof(int),0666);
+
+
 	for(i=0;i<nb;i++){
 		compteurNumeroPoste++;
 		printf("Poste %i relié au poste %d\n",compteurNumeroPoste,numero);
 		tabDonneesThread[numero].precedentsNumero[i] = compteurNumeroPoste;
 		tabDonneesThread[compteurNumeroPoste].suivantNumero = numero;
+		tabDonneesThread[compteurNumeroPoste].mutexConteneurSortant = tabDonneesThread[numero].mutexConteneurEntrant;
+		tabDonneesThread[compteurNumeroPoste].memoireSortant = tabDonneesThread[numero].memoireEntrant;
 	}
 	//on lance l'initialisation pour tous les postes reliés
 	for(i=0;i<nb;i++){
@@ -89,7 +103,16 @@ void initialisationPostes(){
 		compteurNumeroPoste++;
 	}
 
+	//On va passer le mutex & la memoire 
+	pthread_mutex_init(&tabDonneesThread[0].mutexConteneurEntrant,NULL);
+	tabDonneesThread[0].memoireEntrant = shmget(IPC_PRIVATE,sizeof(int),0666);
+	for(i=1;i<tabDonneesThread[0].nbPrecedents+1;i++){
+		tabDonneesThread[i].mutexConteneurSortant = tabDonneesThread[0].mutexConteneurEntrant;
+		tabDonneesThread[i].memoireSortant = tabDonneesThread[0].memoireEntrant;
+
+	}
 	sleep(1);
+
 	printf("Bien, maintenant nous allons faire poste par poste donc ligne par ligne.\n");
 	//On parcourt tous les postes du poste 0
 	for(i=1;i<tabDonneesThread[0].nbPrecedents+1;i++) initialisationPoste(i);
@@ -135,7 +158,7 @@ void hommeFLux_rendreConteneur(int num){
 	pthread_mutex_unlock(&attributionConteneur);
 	return;
 }
-
+ 
 void* posteTravail(void* donnees){
 	//On tente de recuperer les données
 	struct donneesInitThread *mesDonnees;
@@ -152,8 +175,20 @@ void* posteTravail(void* donnees){
 	//2nde étape récupérer le pid du suivant
 	if(mesDonnees->numeroPoste != 0)
 		mesDonnees->suivantID = tabThreads[mesDonnees->suivantNumero][1];
+		pthread_mutex_lock(&attributionConteneur);
+		printf("Poste %d\n",mesDonnees->numeroPoste);
+	printf("cle in %d | cle out : %d\n",mesDonnees->memoireEntrant,mesDonnees->memoireSortant);
+	int* in;
+	int* out;
+	in = (int*) shmat(mesDonnees->memoireEntrant,NULL,0);
 
-	
+	*in = mesDonnees->numeroPoste;
+	if(mesDonnees->numeroPoste > 0){
+		out = (int*) shmat(mesDonnees->memoireSortant,NULL,0);
+
+	printf("Ma donnée : %d | Donnée partagée : %d\n",*in,*out);
+	}
+		pthread_mutex_unlock(&attributionConteneur);
 return;
 }
 
