@@ -19,6 +19,7 @@ int tableauConteneurs[NB_CONTENEURS];
 int conteneursDispo = NB_CONTENEURS;
 
 pthread_t tabThreads[NB_THREADS][2];
+pthread_t threadTableauDeLancement;
 
 pthread_mutex_t attributionConteneur;
 pthread_cond_t attenteConteneur;
@@ -41,11 +42,19 @@ struct donneesInitThread
 	int memoireSortant;
 	int memoireEntrant;
 };
+//A changer
+struct mymsg {
+      long      mtype;    /* message type */
+      char mtext[256]; /* message text of length MSGSZ */
+};
+
 
 struct donneesInitThread tabDonneesThread[NB_THREADS];
 
 //Va servir pour compter les numeros de poste
 int compteurNumeroPoste = 0;
+
+int fluxCarteMagnetique;//une file de message destinée au tableau de lancement
 
 /*
 	Permet d'initialiser individuellement chaque poste de travail
@@ -175,9 +184,8 @@ void* posteTravail(void* donnees){
 	//2nde étape récupérer le pid du suivant
 	if(mesDonnees->numeroPoste != 0)
 		mesDonnees->suivantID = tabThreads[mesDonnees->suivantNumero][1];
-		pthread_mutex_lock(&attributionConteneur);
-		printf("Poste %d\n",mesDonnees->numeroPoste);
-	printf("cle in %d | cle out : %d\n",mesDonnees->memoireEntrant,mesDonnees->memoireSortant);
+		//pthread_mutex_lock(&attributionConteneur);
+		
 	int* in;
 	int* out;
 	in = (int*) shmat(mesDonnees->memoireEntrant,NULL,0);
@@ -185,30 +193,66 @@ void* posteTravail(void* donnees){
 	*in = mesDonnees->numeroPoste;
 	if(mesDonnees->numeroPoste > 0){
 		out = (int*) shmat(mesDonnees->memoireSortant,NULL,0);
-
-	printf("Ma donnée : %d | Donnée partagée : %d\n",*in,*out);
 	}
-		pthread_mutex_unlock(&attributionConteneur);
+	struct mymsg message;
+
+	strcpy(message.mtext ,  "Bonjour");
+	message.mtype = mesDonnees->numeroPoste+1;
+
+	if(msgsnd(fluxCarteMagnetique,&message,sizeof(struct mymsg),IPC_NOWAIT)==-1){
+		perror("HOUSTON , WE HAVE A FUCKING PROBLEM !\n");
+		msgctl(fluxCarteMagnetique,IPC_RMID,0);
+		exit(1);
+	}
+		//pthread_mutex_unlock(&attributionConteneur);
 return;
+}
+void initialisationTableauLancement(){
+	if((fluxCarteMagnetique=msgget(123456,IPC_CREAT|IPC_EXCL|0600))==-1){
+		perror("La file de message n'a pas pu être crée.\n");
+		exit(1);
+	}
+}
+
+void* tableauDeLancement(void* donnee){
+
+	//ajouter le handler pour le Ctr+c
+	int i;
+	struct mymsg tampon;
+	//while(1){
+		for(i=1;i<=NB_THREADS;i++){
+			if(msgrcv(fluxCarteMagnetique,&tampon,sizeof(struct mymsg),i,0)==-1){
+				perror("HOUSTON, WE WILL DIE\n");
+				msgctl(fluxCarteMagnetique,IPC_RMID,0);
+				exit(1);
+			}
+			printf("J'ai recu %s\n",tampon.mtext);
+		}
+	//}
+	return;
 }
 
 int main(void){
 	
 	initialisationPostes();//On crée l'architecture
 	initialisationTabThread();//On instancie la table des threads
-
+	initialisationTableauLancement();
 	pthread_mutex_init(&attributionConteneur,NULL);
 		
 	int j;	
 	for(j=0;j<NB_THREADS;j++){
 		pthread_create(&tabThreads[j][1],0,posteTravail, &tabDonneesThread[j]);
 	}
+	pthread_create(&threadTableauDeLancement,0,tableauDeLancement,NULL);
+
 	for(j=0;j<NB_THREADS;j++){
 		pthread_join(tabThreads[j][1],NULL);
 	}
+	pthread_join(threadTableauDeLancement,NULL);
 	/*
 		Fonction pour envoyer un signal à un thread
 		pthread_kill(tabThreads[2],SIGUSR1);
 	*/
 	
+	msgctl(fluxCarteMagnetique,IPC_RMID,0);
 }
