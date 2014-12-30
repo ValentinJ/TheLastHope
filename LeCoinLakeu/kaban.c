@@ -39,8 +39,8 @@ struct donneesInitThread
 	int tempsFabrication;
 	pthread_mutex_t mutexConteneurEntrant;
 	pthread_mutex_t mutexConteneurSortant;
-	int memoireSortant;
-	int memoireEntrant;
+	int conteneurEntrant;
+	int conteneurSortant;
 };
 //A changer
 struct mymsg {
@@ -48,6 +48,12 @@ struct mymsg {
       char mtext[256]; /* message text of length MSGSZ */
 };
 
+//Message communicant entre les postes <==> conteneurs
+struct conteneur{
+	long numeroPoste;
+	int nombrePieceProduite;
+	char nomPiece[256];
+};
 
 struct donneesInitThread tabDonneesThread[NB_THREADS];
 
@@ -70,17 +76,26 @@ void initialisationPoste(int numero){
 	//On initialise tous les postes reliés à celui-ci ainsi que le mutex
 	pthread_mutex_init(&tabDonneesThread[numero].mutexConteneurEntrant,NULL);
 
-	//On initialise les clés pour coder le segment de mémoire partagée
-	tabDonneesThread[numero].memoireEntrant = shmget(IPC_PRIVATE,sizeof(int),0666);
-
-
+	/* PROJET ABANDONNE 
+	| 	NIVEAU DE SECURITE ALPHA 254
+	|	CODE SECURITE : ROUGE
+	|
+	|//On initialise les clés pour coder le segment de mémoire partagée
+	|//tabDonneesThread[numero].memoireEntrant = shmget(IPC_PRIVATE,sizeof(int),0666);
+	|
+	*/
+	if((tabDonneesThread[numero].conteneurEntrant = msgget((key_t)numero,IPC_CREAT|IPC_EXCL|0600))<=0){
+		perror("Probleme lors de la création de la file de message\n");
+		exit(1);
+	}
 	for(i=0;i<nb;i++){
 		compteurNumeroPoste++;
 		printf("Poste %i relié au poste %d\n",compteurNumeroPoste,numero);
 		tabDonneesThread[numero].precedentsNumero[i] = compteurNumeroPoste;
 		tabDonneesThread[compteurNumeroPoste].suivantNumero = numero;
 		tabDonneesThread[compteurNumeroPoste].mutexConteneurSortant = tabDonneesThread[numero].mutexConteneurEntrant;
-		tabDonneesThread[compteurNumeroPoste].memoireSortant = tabDonneesThread[numero].memoireEntrant;
+		//tabDonneesThread[compteurNumeroPoste].memoireSortant = tabDonneesThread[numero].memoireEntrant;
+		tabDonneesThread[compteurNumeroPoste].conteneurSortant = tabDonneesThread[numero].conteneurEntrant;
 	}
 	//on lance l'initialisation pour tous les postes reliés
 	for(i=0;i<nb;i++){
@@ -112,12 +127,19 @@ void initialisationPostes(){
 		compteurNumeroPoste++;
 	}
 
-	//On va passer le mutex & la memoire 
+	//On va passer le mutex 
 	pthread_mutex_init(&tabDonneesThread[0].mutexConteneurEntrant,NULL);
-	tabDonneesThread[0].memoireEntrant = shmget(IPC_PRIVATE,sizeof(int),0666);
+	//tabDonneesThread[0].memoireEntrant = shmget(IPC_PRIVATE,sizeof(int),0666);
+
+	if((tabDonneesThread[0].conteneurEntrant = msgget((key_t)0,IPC_CREAT|IPC_EXCL|0600))<=0){
+		perror("Erreur lors de la création de la file de message pour le poste 0\n");
+		exit(1);
+	}
+
 	for(i=1;i<tabDonneesThread[0].nbPrecedents+1;i++){
 		tabDonneesThread[i].mutexConteneurSortant = tabDonneesThread[0].mutexConteneurEntrant;
-		tabDonneesThread[i].memoireSortant = tabDonneesThread[0].memoireEntrant;
+		tabDonneesThread[i].conteneurSortant = tabDonneesThread[0].conteneurEntrant;
+
 
 	}
 	sleep(1);
@@ -185,30 +207,47 @@ void* posteTravail(void* donnees){
 	if(mesDonnees->numeroPoste != 0)
 		mesDonnees->suivantID = tabThreads[mesDonnees->suivantNumero][1];
 		//pthread_mutex_lock(&attributionConteneur);
-		
-	int* in;
-	int* out;
-	in = (int*) shmat(mesDonnees->memoireEntrant,NULL,0);
 
-	*in = mesDonnees->numeroPoste;
-	if(mesDonnees->numeroPoste > 0){
-		out = (int*) shmat(mesDonnees->memoireSortant,NULL,0);
-	}
+
 	struct mymsg message;
 
 	strcpy(message.mtext ,  "Bonjour");
 	message.mtype = mesDonnees->numeroPoste+1;
 
-	if(msgsnd(fluxCarteMagnetique,&message,sizeof(struct mymsg),IPC_NOWAIT)==-1){
+	/*if(msgsnd(fluxCarteMagnetique,&message,sizeof(struct mymsg),IPC_NOWAIT)==-1){
 		perror("HOUSTON , WE HAVE A FUCKING PROBLEM !\n");
 		msgctl(fluxCarteMagnetique,IPC_RMID,0);
+		exit(1);
+	}
+	*/
+	if(mesDonnees->numeroPoste != 0){
+		struct conteneur monMessage;
+		monMessage.numeroPoste = mesDonnees->numeroPoste;
+		strcpy(monMessage.nomPiece,"BONJOUR");
+		msgsnd(mesDonnees->conteneurSortant,&monMessage,sizeof(struct conteneur),IPC_NOWAIT);
+		printf("Je suis poste %d et j'ai tout envoyé\n",mesDonnees->numeroPoste);
+		}
+
+	
+	if(mesDonnees->numeroPoste != NB_THREADS-1){
+		struct conteneur messageRecu;
+		for(i=0;i<mesDonnees->nbPrecedents;i++){
+			msgrcv(mesDonnees->conteneurEntrant,&messageRecu,sizeof(struct conteneur), mesDonnees->precedentsNumero[i],0);
+			printf("Je suis le poste %d et j'ai lu de %d le message %s\n",mesDonnees->numeroPoste,(int)messageRecu.numeroPoste,messageRecu.nomPiece);
+		}
+		printf("Je suis poste %d et j'ai tout recu, je vais mourir du décès\n",mesDonnees->numeroPoste);
+	}
+	
+	// a ranger dans le handler
+	if(msgctl(mesDonnees->conteneurEntrant,IPC_RMID,0)== -1 ){
+		perror("Probleme avec la suppression de la file de messages\n");
 		exit(1);
 	}
 		//pthread_mutex_unlock(&attributionConteneur);
 return;
 }
 void initialisationTableauLancement(){
-	if((fluxCarteMagnetique=msgget(123456,IPC_CREAT|IPC_EXCL|0600))==-1){
+	if((fluxCarteMagnetique=msgget(123456,IPC_CREAT|0600))==-1){
 		perror("La file de message n'a pas pu être crée.\n");
 		exit(1);
 	}
@@ -220,7 +259,7 @@ void* tableauDeLancement(void* donnee){
 	int i;
 	struct mymsg tampon;
 	//while(1){
-		for(i=1;i<=NB_THREADS;i++){
+		/*for(i=1;i<=NB_THREADS;i++){
 			if(msgrcv(fluxCarteMagnetique,&tampon,sizeof(struct mymsg),i,0)==-1){
 				perror("HOUSTON, WE WILL DIE\n");
 				msgctl(fluxCarteMagnetique,IPC_RMID,0);
@@ -228,7 +267,8 @@ void* tableauDeLancement(void* donnee){
 			}
 			printf("J'ai recu %s\n",tampon.mtext);
 		}
-	//}
+	//}*/
+		msgctl(fluxCarteMagnetique,IPC_RMID,0);
 	return;
 }
 
