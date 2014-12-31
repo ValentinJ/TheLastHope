@@ -10,10 +10,15 @@
 #include <pthread.h>
 #include <string.h>
 #include <semaphore.h>
+#include <signal.h>
+#include <sys/syscall.h>
 
+#define NB_SIGNAUX SIGRTMIN
 
 #define NB_THREADS 10//=nombre de poste
 #define NB_CONTENEURS 50
+
+#define SIGUSR2     12//putain de os à la con
 
 int tableauConteneurs[NB_CONTENEURS];
 int conteneursDispo = NB_CONTENEURS;
@@ -53,6 +58,7 @@ struct conteneur{
 	long numeroPoste;
 	int nombrePieceProduite;
 	char nomPiece[256];
+	int numeroConteneur;
 };
 
 struct donneesInitThread tabDonneesThread[NB_THREADS];
@@ -70,6 +76,10 @@ void initialisationPoste(int numero){
 	int i,nb;
 	printf("Combien de poste pour le poste %d ?\n",numero);
 	scanf("%d",&nb);
+	printf("Combien de temps mets il pour produire 1 pièce ?");
+	scanf("%d",&tabDonneesThread[numero].tempsFabrication);
+	printf("Combien de pièces doit il produire ?");
+	scanf("%d",&tabDonneesThread[numero].nbPiecesAProduire);
 	tabDonneesThread[numero].nbPrecedents = nb;
 	tabDonneesThread[numero].numeroPoste = numero;
 
@@ -94,7 +104,6 @@ void initialisationPoste(int numero){
 		tabDonneesThread[numero].precedentsNumero[i] = compteurNumeroPoste;
 		tabDonneesThread[compteurNumeroPoste].suivantNumero = numero;
 		tabDonneesThread[compteurNumeroPoste].mutexConteneurSortant = tabDonneesThread[numero].mutexConteneurEntrant;
-		//tabDonneesThread[compteurNumeroPoste].memoireSortant = tabDonneesThread[numero].memoireEntrant;
 		tabDonneesThread[compteurNumeroPoste].conteneurSortant = tabDonneesThread[numero].conteneurEntrant;
 	}
 	//on lance l'initialisation pour tous les postes reliés
@@ -115,11 +124,12 @@ void initialisationPostes(){
 	sleep(1);
 	printf("Combien de postes pour le poste final ?");
 	scanf("%d",&nb);
+	printf("Combien de temps mets il pour produire 1 pièce ?");
+	scanf("%d",&tabDonneesThread[0].tempsFabrication);	
 
 	tabDonneesThread[0].numeroPoste = 0;
 	tabDonneesThread[0].nbPrecedents = nb;
 
-	//tabThreads[0][0] = 0;
 	printf("Les postes suivants sont reliés au poste 0 : \n");
 	for(i=1;i<nb+1;i++){
 		printf("Poste %d\n",i);
@@ -129,7 +139,6 @@ void initialisationPostes(){
 
 	//On va passer le mutex 
 	pthread_mutex_init(&tabDonneesThread[0].mutexConteneurEntrant,NULL);
-	//tabDonneesThread[0].memoireEntrant = shmget(IPC_PRIVATE,sizeof(int),0666);
 
 	if((tabDonneesThread[0].conteneurEntrant = msgget((key_t)0,IPC_CREAT|IPC_EXCL|0600))<=0){
 		perror("Erreur lors de la création de la file de message pour le poste 0\n");
@@ -191,6 +200,10 @@ void hommeFLux_rendreConteneur(int num){
 }
  
 void* posteTravail(void* donnees){
+
+
+	
+
 	//On tente de recuperer les données
 	struct donneesInitThread *mesDonnees;
 	mesDonnees = (struct donneesInitThread*) donnees;
@@ -206,20 +219,16 @@ void* posteTravail(void* donnees){
 	//2nde étape récupérer le pid du suivant
 	if(mesDonnees->numeroPoste != 0)
 		mesDonnees->suivantID = tabThreads[mesDonnees->suivantNumero][1];
-		//pthread_mutex_lock(&attributionConteneur);
 
 
+	/*
+		--------------PHASE DE TEST ----------------------------------------
+	
 	struct mymsg message;
 
 	strcpy(message.mtext ,  "Bonjour");
 	message.mtype = mesDonnees->numeroPoste+1;
 
-	/*if(msgsnd(fluxCarteMagnetique,&message,sizeof(struct mymsg),IPC_NOWAIT)==-1){
-		perror("HOUSTON , WE HAVE A FUCKING PROBLEM !\n");
-		msgctl(fluxCarteMagnetique,IPC_RMID,0);
-		exit(1);
-	}
-	*/
 	if(mesDonnees->numeroPoste != 0){
 		struct conteneur monMessage;
 		monMessage.numeroPoste = mesDonnees->numeroPoste;
@@ -237,13 +246,71 @@ void* posteTravail(void* donnees){
 		}
 		printf("Je suis poste %d et j'ai tout recu, je vais mourir du décès\n",mesDonnees->numeroPoste);
 	}
-	
-	// a ranger dans le handler
-	if(msgctl(mesDonnees->conteneurEntrant,IPC_RMID,0)== -1 ){
-		perror("Probleme avec la suppression de la file de messages\n");
-		exit(1);
+	*/
+	/* ----------------FIN DE LA PHASE DE TEST ----------------------------------------*/
+
+	int stock[mesDonnees->nbPrecedents][2];
+	int monConteneur;
+	int piecesAProduire;
+	/*
+		Dans la première colonne le numéro du poste
+		Dans la seconde l'état du stock dispo/indispo <-> 1/0
+	*/
+
+	//Pour l'initialisation on va donner de facon arbitraire un stock
+	for(i=0;i<mesDonnees->nbPrecedents;i++){
+		stock[i][1] = 1;
+		stock[i][0] = mesDonnees->precedentsNumero[i];
 	}
-		//pthread_mutex_unlock(&attributionConteneur);
+
+
+
+
+	//On rentre dans la boucle de travail
+	while(1){
+		pause();//On attent l'ordre du tableau de lancement
+		piecesAProduire = mesDonnees->nbPiecesAProduire;
+		printf("Poste %d : démarrage des machines\n",mesDonnees->numeroPoste);
+		//On réclame un conteneur à l'homme flux
+		monConteneur = hommeFlux_attribuerConteneur();
+
+		for(piecesAProduire;piecesAProduire>=0;piecesAProduire--){
+			//On vide les stocks
+			for(i=0;i<mesDonnees->nbPrecedents;i++){
+				stock[i][1]=0;
+				struct mymsg msg;
+				msg.mtype = mesDonnees->precedentsNumero[i]+1;
+				strcpy(msg.mtext,"VIDE");
+				msgsnd(fluxCarteMagnetique,&msg,sizeof(struct mymsg),IPC_NOWAIT);
+			}
+
+			//On commence à produire
+			printf("Poste %d : début fabrication\n",mesDonnees->numeroPoste);
+			sleep(mesDonnees->tempsFabrication);
+			printf("Poste %d : fin fabrication\n",mesDonnees->numeroPoste);
+
+			//on a fini de produire
+
+			//On va regarder si les pièces sont arrivées !
+			struct conteneur msg;
+			for(i=0;i<mesDonnees->nbPrecedents;i++){
+				msgrcv(mesDonnees->conteneurEntrant,&msg,sizeof(struct conteneur),mesDonnees->precedentsNumero[i]+1,0);
+				stock[i][1] = 1;
+			}
+
+			//on a toute les pièces, on peut retravailler ou dormir !
+	}
+	//On a fini de produire
+	struct conteneur produitFini;
+	produitFini.numeroPoste = mesDonnees->numeroPoste+1;
+	produitFini.numeroConteneur = monConteneur;
+	produitFini.nombrePieceProduite = mesDonnees->nbPiecesAProduire;
+	printf("Poste %d pièce(s) fabriquée(s) et envoyée(s)\n",mesDonnees->numeroPoste);
+	msgsnd(mesDonnees->conteneurSortant,&produitFini,sizeof(struct conteneur),IPC_NOWAIT);
+
+	}
+
+	
 return;
 }
 void initialisationTableauLancement(){
@@ -255,35 +322,61 @@ void initialisationTableauLancement(){
 
 void* tableauDeLancement(void* donnee){
 
-	//ajouter le handler pour le Ctr+c
 	int i;
 	struct mymsg tampon;
-	//while(1){
-		/*for(i=1;i<=NB_THREADS;i++){
-			if(msgrcv(fluxCarteMagnetique,&tampon,sizeof(struct mymsg),i,0)==-1){
-				perror("HOUSTON, WE WILL DIE\n");
-				msgctl(fluxCarteMagnetique,IPC_RMID,0);
-				exit(1);
+	while(1){
+		for(i=1;i<=NB_THREADS;i++){
+			if(msgrcv(fluxCarteMagnetique,&tampon,sizeof(struct mymsg),i,IPC_NOWAIT)>0){
+				printf("Message envoyé à %d\n",i);
+				pthread_kill(tabThreads[i-1][1],SIGUSR2);
 			}
-			printf("J'ai recu %s\n",tampon.mtext);
+
 		}
-	//}*/
-		msgctl(fluxCarteMagnetique,IPC_RMID,0);
+	}
 	return;
 }
+void FermetureUsine(){
+	int i;
+	printf("Signal envoyé mon général ! \n");
 
-int main(void){
+	for(i=0;i<NB_THREADS;i++){
+		pthread_cancel(tabThreads[i][1]);
+	}
 	
+	pthread_cancel(threadTableauDeLancement);
+
+	for(i=0;i<NB_THREADS;i++){
+		if(msgctl(tabDonneesThread[i].conteneurEntrant,IPC_RMID,0)==-1 ){
+			perror("Probleme avec la suppression de la file de messages\n");
+			}
+		printf("Poste %d , je ferme\n",i);
+	}
+	pthread_kill(threadTableauDeLancement,SIGINT);
+	msgctl(fluxCarteMagnetique,IPC_RMID,0);
+	exit(1);
+}
+void tmp(){
+	printf("PUTAIN\n");
+}
+int main(void){
+	signal(SIGINT,FermetureUsine);
+	signal(SIGUSR2,tmp);
 	initialisationPostes();//On crée l'architecture
 	initialisationTabThread();//On instancie la table des threads
 	initialisationTableauLancement();
 	pthread_mutex_init(&attributionConteneur,NULL);
 		
 	int j;	
+
 	for(j=0;j<NB_THREADS;j++){
 		pthread_create(&tabThreads[j][1],0,posteTravail, &tabDonneesThread[j]);
 	}
 	pthread_create(&threadTableauDeLancement,0,tableauDeLancement,NULL);
+
+	sleep(1);
+
+	//et Dieu créa la vie
+	pthread_kill(tabThreads[0][1],SIGUSR2);
 
 	for(j=0;j<NB_THREADS;j++){
 		pthread_join(tabThreads[j][1],NULL);
