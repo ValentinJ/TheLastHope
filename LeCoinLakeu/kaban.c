@@ -266,7 +266,7 @@ void* posteTravail(void* donnees){
 	sigemptyset(&ens);
 	sigprocmask(SIG_SETMASK,&ens,NULL);
 
-	while(1 && PiecesProduites>0){
+	while(PiecesProduites>0){
 
 		if(mesDonnees->numeroPoste > 0 || depart)
 			{
@@ -326,8 +326,10 @@ void* posteTravail(void* donnees){
 	printf("Poste %d pièce(s) fabriquée(s) et/ou envoyée(s)\n",mesDonnees->numeroPoste);
 
 	//Quand le dernier poste produit une pièce, c'est qu'une pièce finale est produite
-	if(mesDonnees->numeroPoste == 0) PiecesProduites--;
-
+	if(mesDonnees->numeroPoste == 0){
+		 PiecesProduites--;
+		 hommeFLux_rendreConteneur(monConteneur);
+		}
 	msgsnd(mesDonnees->conteneurSortant,&produitFini,sizeof(struct conteneur),IPC_NOWAIT);
 		printf("Poste %d : arrêt des machines.\n",mesDonnees->numeroPoste);
 
