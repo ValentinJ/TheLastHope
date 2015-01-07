@@ -29,6 +29,9 @@ pthread_t threadTableauDeLancement;
 pthread_mutex_t attributionConteneur;
 pthread_cond_t attenteConteneur;
 pthread_cond_t attenteAcces;
+pthread_cond_t attenteLancement;
+
+int PiecesProduites;
 /*
 	Structure permettant de stocker les infos du poste/thread
 */
@@ -74,11 +77,11 @@ int fluxCarteMagnetique;//une file de message destinée au tableau de lancement
 void initialisationPoste(int numero){
 
 	int i,nb;
-	printf("Combien de poste pour le poste %d ?\n",numero);
+	printf("Combien de postes pour le poste %d ?\n",numero);
 	scanf("%d",&nb);
-	printf("Combien de temps mets il pour produire 1 pièce ?");
+	printf("Combien de temps met-il pour produire 1 pièce ?");
 	scanf("%d",&tabDonneesThread[numero].tempsFabrication);
-	printf("Combien de pièces doit il produire ?");
+	printf("Combien de pièces doit-il produire ?");
 	scanf("%d",&tabDonneesThread[numero].nbPiecesAProduire);
 	tabDonneesThread[numero].nbPrecedents = nb;
 	tabDonneesThread[numero].numeroPoste = numero;
@@ -115,10 +118,14 @@ void initialisationPoste(int numero){
 /*
 	Lance l'initialisation de tous les postes de travail
 */
+
 void initialisationPostes(){
 
 	int nb,i,j;
 	printf("Bienvenue dans le gestionnaire des postes de travail\n");
+	printf("Combien de pièces devons nous produire ?");
+	scanf("%d",&PiecesProduites);
+	printf("Début de l'initialisation de l'usine :\n");
 	sleep(1);
 	printf("Nous allons commencer du dernier poste\n");
 	sleep(1);
@@ -126,6 +133,8 @@ void initialisationPostes(){
 	scanf("%d",&nb);
 	printf("Combien de temps mets il pour produire 1 pièce ?");
 	scanf("%d",&tabDonneesThread[0].tempsFabrication);	
+	printf("Combien de pièces doit il produire ?");
+	scanf("%d",&tabDonneesThread[0].nbPiecesAProduire);
 
 	tabDonneesThread[0].numeroPoste = 0;
 	tabDonneesThread[0].nbPrecedents = nb;
@@ -198,11 +207,10 @@ void hommeFLux_rendreConteneur(int num){
 	pthread_mutex_unlock(&attributionConteneur);
 	return;
 }
- 
+
 void* posteTravail(void* donnees){
 
 
-	
 
 	//On tente de recuperer les données
 	struct donneesInitThread *mesDonnees;
@@ -210,7 +218,6 @@ void* posteTravail(void* donnees){
 
 	//1ère étape récupérer les pid des prédécesseurs
 	sleep(1);//afin d'attendre tous les threads
-
 	int i;
 	for(i=0;i<mesDonnees->nbPrecedents;i++){
 		mesDonnees->precedentsID[i] = tabThreads[mesDonnees->precedentsNumero[i]][1];
@@ -220,36 +227,8 @@ void* posteTravail(void* donnees){
 	if(mesDonnees->numeroPoste != 0)
 		mesDonnees->suivantID = tabThreads[mesDonnees->suivantNumero][1];
 
-
-	/*
-		--------------PHASE DE TEST ----------------------------------------
-	
-	struct mymsg message;
-
-	strcpy(message.mtext ,  "Bonjour");
-	message.mtype = mesDonnees->numeroPoste+1;
-
-	if(mesDonnees->numeroPoste != 0){
-		struct conteneur monMessage;
-		monMessage.numeroPoste = mesDonnees->numeroPoste;
-		strcpy(monMessage.nomPiece,"BONJOUR");
-		msgsnd(mesDonnees->conteneurSortant,&monMessage,sizeof(struct conteneur),IPC_NOWAIT);
-		printf("Je suis poste %d et j'ai tout envoyé\n",mesDonnees->numeroPoste);
-		}
-
-	
-	if(mesDonnees->numeroPoste != NB_THREADS-1){
-		struct conteneur messageRecu;
-		for(i=0;i<mesDonnees->nbPrecedents;i++){
-			msgrcv(mesDonnees->conteneurEntrant,&messageRecu,sizeof(struct conteneur), mesDonnees->precedentsNumero[i],0);
-			printf("Je suis le poste %d et j'ai lu de %d le message %s\n",mesDonnees->numeroPoste,(int)messageRecu.numeroPoste,messageRecu.nomPiece);
-		}
-		printf("Je suis poste %d et j'ai tout recu, je vais mourir du décès\n",mesDonnees->numeroPoste);
-	}
-	*/
-	/* ----------------FIN DE LA PHASE DE TEST ----------------------------------------*/
-
 	int stock[mesDonnees->nbPrecedents][2];
+	
 	int monConteneur;
 	int piecesAProduire;
 	/*
@@ -264,17 +243,30 @@ void* posteTravail(void* donnees){
 	}
 
 
+	struct mymsg msgInit;
+	msgInit.mtype = mesDonnees->numeroPoste+1;
+	msgsnd(fluxCarteMagnetique,&msgInit,sizeof(struct mymsg),IPC_NOWAIT);
 
+
+	int depart = 1; //permet de différencier la premiere boucle aux autres
 
 	//On rentre dans la boucle de travail
-	while(1){
-		pause();//On attent l'ordre du tableau de lancement
+
+	while(1 && PiecesProduites>0){
+
+		if(mesDonnees->numeroPoste > 0 || depart)
+			{
+				pause();//On attent l'ordre du tableau de lancement
+				depart = 0;
+			}
+		//msgrcv(fluxCarteMagnetique,&msgInit,sizeof(struct mymsg),mesDonnees->numeroPoste+1,0);
+
 		piecesAProduire = mesDonnees->nbPiecesAProduire;
 		printf("Poste %d : démarrage des machines\n",mesDonnees->numeroPoste);
 		//On réclame un conteneur à l'homme flux
 		monConteneur = hommeFlux_attribuerConteneur();
 
-		for(piecesAProduire;piecesAProduire>=0;piecesAProduire--){
+		for(piecesAProduire;piecesAProduire>0;piecesAProduire--){
 			//On vide les stocks
 			for(i=0;i<mesDonnees->nbPrecedents;i++){
 				stock[i][1]=0;
@@ -283,6 +275,8 @@ void* posteTravail(void* donnees){
 				strcpy(msg.mtext,"VIDE");
 				msgsnd(fluxCarteMagnetique,&msg,sizeof(struct mymsg),IPC_NOWAIT);
 			}
+			//Si pas de précédent
+			if(mesDonnees->nbPrecedents==0) sleep(1);
 
 			//On commence à produire
 			printf("Poste %d : début fabrication\n",mesDonnees->numeroPoste);
@@ -297,8 +291,11 @@ void* posteTravail(void* donnees){
 				msgrcv(mesDonnees->conteneurEntrant,&msg,sizeof(struct conteneur),mesDonnees->precedentsNumero[i]+1,0);
 				stock[i][1] = 1;
 			}
+			//Si pas de précédent
+			if(mesDonnees->nbPrecedents==0) sleep(1);
 
 			//on a toute les pièces, on peut retravailler ou dormir !
+				printf("Poste %d : Stock rempli.\n",mesDonnees->numeroPoste);
 	}
 	//On a fini de produire
 	struct conteneur produitFini;
@@ -306,7 +303,12 @@ void* posteTravail(void* donnees){
 	produitFini.numeroConteneur = monConteneur;
 	produitFini.nombrePieceProduite = mesDonnees->nbPiecesAProduire;
 	printf("Poste %d pièce(s) fabriquée(s) et envoyée(s)\n",mesDonnees->numeroPoste);
+
+	//Quand le dernier poste produit une pièce, c'est qu'une pièce finale est produite
+	if(mesDonnees->numeroPoste == 0) PiecesProduites--;
+
 	msgsnd(mesDonnees->conteneurSortant,&produitFini,sizeof(struct conteneur),IPC_NOWAIT);
+		printf("Poste %d : arrêt des machines.\n",mesDonnees->numeroPoste);
 
 	}
 
@@ -324,11 +326,20 @@ void* tableauDeLancement(void* donnee){
 
 	int i;
 	struct mymsg tampon;
+	//
+	for(i=1;i<=NB_THREADS;i++){
+		msgrcv(fluxCarteMagnetique,&tampon,sizeof(struct mymsg),i,0);
+		printf("Recu de %d\n",i-1);
+	}
+	pthread_kill(tabThreads[0][1],SIGUSR2);
+
+
 	while(1){
 		for(i=1;i<=NB_THREADS;i++){
 			if(msgrcv(fluxCarteMagnetique,&tampon,sizeof(struct mymsg),i,IPC_NOWAIT)>0){
-				printf("Message envoyé à %d\n",i);
+				printf("Message envoyé à %d\n",i-1);
 				pthread_kill(tabThreads[i-1][1],SIGUSR2);
+				//msgsnd(fluxCarteMagnetique,&tampon,sizeof(struct mymsg),IPC_NOWAIT);
 			}
 
 		}
@@ -337,7 +348,7 @@ void* tableauDeLancement(void* donnee){
 }
 void FermetureUsine(){
 	int i;
-	printf("Signal envoyé mon général ! \n");
+	printf("Fermeture de l'usine ! \n");
 
 	for(i=0;i<NB_THREADS;i++){
 		pthread_cancel(tabThreads[i][1]);
@@ -356,16 +367,16 @@ void FermetureUsine(){
 	exit(1);
 }
 void tmp(){
-	printf("PUTAIN\n");
+	
 }
 int main(void){
-	signal(SIGINT,FermetureUsine);
 	signal(SIGUSR2,tmp);
+	signal(SIGINT,FermetureUsine);
 	initialisationPostes();//On crée l'architecture
 	initialisationTabThread();//On instancie la table des threads
 	initialisationTableauLancement();
 	pthread_mutex_init(&attributionConteneur,NULL);
-		
+	
 	int j;	
 
 	for(j=0;j<NB_THREADS;j++){
@@ -376,16 +387,13 @@ int main(void){
 	sleep(1);
 
 	//et Dieu créa la vie
-	pthread_kill(tabThreads[0][1],SIGUSR2);
+	//pthread_kill(tabThreads[0][1],SIGUSR2);
 
 	for(j=0;j<NB_THREADS;j++){
 		pthread_join(tabThreads[j][1],NULL);
 	}
+	FermetureUsine();
 	pthread_join(threadTableauDeLancement,NULL);
-	/*
-		Fonction pour envoyer un signal à un thread
-		pthread_kill(tabThreads[2],SIGUSR1);
-	*/
-	
+
 	msgctl(fluxCarteMagnetique,IPC_RMID,0);
 }
