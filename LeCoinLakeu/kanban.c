@@ -25,7 +25,7 @@ int NB_THREADS;
 int tableauConteneurs[NB_CONTENEURS];
 int conteneursDispo = NB_CONTENEURS;
 
-pthread_t tabThreads[NB_THREADS_MAX][2];
+pthread_t tabThreads[NB_THREADS_MAX][2];//fait la correspondance entre le n° du poste et son id de thread
 pthread_t threadTableauDeLancement;
 
 pthread_mutex_t attributionConteneur;
@@ -33,7 +33,7 @@ pthread_cond_t attenteConteneur;
 pthread_cond_t attenteAcces;
 pthread_cond_t attenteLancement;
 
-int PiecesProduites;
+int PiecesProduites; //Nombre de pièces totales que doit faire le poste 0
 /*
 	Structure permettant de stocker les infos du poste/thread
 */
@@ -47,12 +47,13 @@ struct donneesInitThread
 	pthread_t precedentsID[NB_THREADS_MAX];
 	int nbPiecesAProduire;
 	int tempsFabrication;
-	//pthread_mutex_t mutexConteneurEntrant;
-	//pthread_mutex_t mutexConteneurSortant;
 	int conteneurEntrant;
 	int conteneurSortant;
 };
-//A changer
+/*
+	Permet d'envoyer un message au tableau de lancement pour lui indiquer 
+	le poste à reveiller
+*/
 struct mymsg {
       long      mtype;    /* message type */
       char mtext[256]; /* message text of length MSGSZ */
@@ -65,7 +66,7 @@ struct conteneur{
 	char nomPiece[256];
 	int numeroConteneur;
 };
-
+//Données de tous les threads
 struct donneesInitThread tabDonneesThread[NB_THREADS_MAX];
 
 //Va servir pour compter les numeros de poste
@@ -76,6 +77,10 @@ int fluxCarteMagnetique;//une file de message destinée au tableau de lancement
 void FermetureUsine();
 /*
 	Permet d'initialiser individuellement chaque poste de travail
+	- son numéro
+	- son temps de fabrication
+	- le nombre de pièces à fabriquer
+	- ses données (la file de message entrante)
 */
 void initialisationPoste(int numero){
 
@@ -94,10 +99,6 @@ void initialisationPoste(int numero){
 	tabDonneesThread[numero].nbPrecedents = nb;
 	tabDonneesThread[numero].numeroPoste = numero;
 
-	//On initialise tous les postes reliés à celui-ci ainsi que le mutex
-	//pthread_mutex_init(&tabDonneesThread[numero].mutexConteneurEntrant,NULL);
-
-
 	if((tabDonneesThread[numero].conteneurEntrant = msgget((key_t)numero,IPC_CREAT|IPC_EXCL|0600))<=0){
 		perror("Probleme lors de la création de la file de message\n");
 		exit(1);
@@ -107,7 +108,6 @@ void initialisationPoste(int numero){
 		printf("Poste %i relié au poste %d\n",compteurNumeroPoste,numero);
 		tabDonneesThread[numero].precedentsNumero[i] = compteurNumeroPoste;
 		tabDonneesThread[compteurNumeroPoste].suivantNumero = numero;
-		//tabDonneesThread[compteurNumeroPoste].mutexConteneurSortant = tabDonneesThread[numero].mutexConteneurEntrant;
 		tabDonneesThread[compteurNumeroPoste].conteneurSortant = tabDonneesThread[numero].conteneurEntrant;
 	}
 	//on lance l'initialisation pour tous les postes reliés
@@ -118,6 +118,8 @@ void initialisationPoste(int numero){
 }
 /*
 	Lance l'initialisation de tous les postes de travail
+	Appel récursif de la fonction pour initialiser un poste
+	permet ainsi de créer une arborescence dynamique 
 */
 
 void initialisationPostes(){
@@ -157,19 +159,13 @@ void initialisationPostes(){
 		compteurNumeroPoste++;
 	}
 
-	//On va passer le mutex 
-	//pthread_mutex_init(&tabDonneesThread[0].mutexConteneurEntrant,NULL);
-
 	if((tabDonneesThread[0].conteneurEntrant = msgget((key_t)0,IPC_CREAT|IPC_EXCL|0600))<=0){
 		perror("Erreur lors de la création de la file de message pour le poste 0\n");
 		exit(1);
 	}
 
 	for(i=1;i<tabDonneesThread[0].nbPrecedents+1;i++){
-		//tabDonneesThread[i].mutexConteneurSortant = tabDonneesThread[0].mutexConteneurEntrant;
 		tabDonneesThread[i].conteneurSortant = tabDonneesThread[0].conteneurEntrant;
-
-
 	}
 	sleep(1);
 
@@ -178,7 +174,9 @@ void initialisationPostes(){
 	for(i=1;i<tabDonneesThread[0].nbPrecedents+1;i++) initialisationPoste(i);
 }
 
-
+/*
+	Initialise le tableau de données de thread
+*/
 
 void initialisationTabThread(){
 	int i,j;
@@ -186,7 +184,9 @@ void initialisationTabThread(){
 		tabThreads[i][0] = i;
 	}
 }
-
+/*
+	Va chercher un conteneur disposible, le réserve et donne le numéro au poste qui a appelé la fonction
+*/
 int hommeFlux_attribuerConteneur(){
 	pthread_mutex_lock(&attributionConteneur);
 
@@ -209,6 +209,9 @@ int hommeFlux_attribuerConteneur(){
 	return num_conteneur;
 }
 
+/*
+	A partir du numéro donné, la fonction va libérer un conteneur
+*/
 
 void hommeFLux_rendreConteneur(int num){
 	pthread_mutex_lock(&attributionConteneur);
@@ -219,6 +222,28 @@ void hommeFLux_rendreConteneur(int num){
 	return;
 }
 
+/*
+	Fonction décrivant l'activité d'un poste de travail
+
+	- On fait correspondre les ids des threads précédents par rapport au n°
+	- On crée le stock : matrice 2 colonnes
+		-> 1ère colonne le n° du thread précédent
+		-> 2nde colone l'état du stock vide/plein
+	- On crée un message factise à envoyer au tableau de lancement pour lui indiquer que l'on est prêt
+
+	Pour le départ :
+	- si on est le poste 0 on ne se met jamais en sigsuspend
+	- sinon on attent le signal du tdl (tableau de lancement)
+
+	Boucle de travail : 
+	On répète autant de fois que l'on doit fabriquer de pièces
+		- on vide le stock et on envoie un signal au tdl pour lui dire de refabriquer la pièce
+		- on fabrique = sleep
+		- on attend le nouveau stock
+	Une fois le nb de pièce attent, on envoie la pièce au poste suivant 
+
+	Un poste ne peut mourir qu'avec le signal Ctr+C
+*/
 void* posteTravail(void* donnees){
 
 
@@ -259,7 +284,7 @@ void* posteTravail(void* donnees){
 	msgsnd(fluxCarteMagnetique,&msgInit,sizeof(struct mymsg),IPC_NOWAIT);
 
 
-	int depart = 1,ignorerSignal = 0; //permet de différencier la premiere boucle aux autres
+	int depart = 1; //permet de différencier la premiere boucle aux autres
 
 	//On rentre dans la boucle de travail
 	sigset_t ens,attente;
@@ -343,7 +368,18 @@ void initialisationTableauLancement(){
 		exit(1);
 	}
 }
+/*
+La fonction se divise en deux parties :
+Partie 1 : Initialisation et lancement
+	Il attend de recevoir un message via l'homme flux (fluxCarteMagnetique) 
+ 	de tous les threads poste de travail avant d'envoyer un signal au poste final
+ 	pour lui dire de commencer à produire
 
+Partie 2 : Production
+	Les threads sont parcourus et dés qu'il reçoit un message de l'homme flux en provenance d'un poste i 
+	qui indique qu'il faut réveille le poste au niveau n-1 par rapport à lui, il lui envoie donc un signal
+
+*/
 void* tableauDeLancement(void* donnee){
 
 	int i;
@@ -368,7 +404,10 @@ void* tableauDeLancement(void* donnee){
 	}
 	return;
 }
-
+/*
+La fonction annule tous les threads créés et supprime les files de messages qu'il y a entre 2 postes( de niveaux n et n-1) 
+et la file de message fluxCarteMagnetique
+*/
 void FermetureUsine(){
 	int i;
 	printf("Fermeture de l'usine ! \n");
@@ -389,9 +428,21 @@ void FermetureUsine(){
 	msgctl(fluxCarteMagnetique,IPC_RMID,0);
 	exit(1);
 }
+//Fonction de permettant d'ignorer le signal SIGUSR2 pour le main
+//Le masque ne fonctionne pas pour le main ...
 void tmp(){
-	//printf("error\n");
+	
 }
+
+/*
+	Association du signal SIGINT à la fonction FermetureUsine pour la fermeture des threads et files de messages
+	Appel de la fonction recursive d'initialisation des postes et des threads dans le tableau tabDonneesThread
+	Initialisation du tableau de lancement
+	Création des threads poste de travail avec appel de la fonction posteTravail et comme paramètres la structure du poste associé au poste correspondant depuis le tableau tabDonneesThread
+	Création du thread tableau de lancement avec appel de la fonction tableauLancement sans paramètres
+	Attente de la fin de tous les threads
+	Suppression de la file de messages fluxCarteMagnetique
+*/
 int main(void){
 
 	signal(SIGUSR2,tmp);

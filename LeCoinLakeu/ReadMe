@@ -1,0 +1,22 @@
+Pour lancer l'application :
+
+- ouvrir un terminal dans le dossier
+- effectuer la commande $make
+- ensuite ./kanban
+
+L'application se lance, elle va vous demander les paramètres pour configurer l'usine : 
+
+- Nombre de postes : correspond aux nombre de postes/thread du programme
+
+- Nombre de pièces à produire : le nombre de pièce que l'usine doit produire
+
+- Le temps que chaque poste met pour produire une pièce.
+
+- Le nombre de pièce que chaque poste doit fabriquer pour que le poste suivant puisse créer une pièce.
+
+- le nombre de postes en aval
+
+La hiérarchie est une aborescence, nous commencons par la racine en parcourant feuille par feuille.
+
+En cas de bugs : vérifier en faisant $ipcs qu'aucune file de message ne soit crée sur la clé 0.
+
